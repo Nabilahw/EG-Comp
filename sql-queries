@@ -1,0 +1,143 @@
+-- Data formatting
+alter table cust_sales
+add id int auto_increment primary key;
+alter table cust_sales modify id int after invoice_no;
+alter table cust_sales modify invoice_no text after id;
+
+alter table cust
+add id int auto_increment primary key;
+alter table cust modify id int after invoice_no;
+alter table cust modify invoice_no text after id;
+
+update cust_sales set invoice_date = str_to_date(invoice_date,"%d/%m/%Y");
+alter table cust_sales modify invoice_date date;
+
+-- Total Shopping Mall
+select count(distinct shopping_mall) TotalMall
+from cust_sales
+;
+
+-- 1.	What is the total customer has been shopping for each shopping mall in Istanbul?
+select shopping_mall 'Shopping Mall', count(customer_id) 'Total Customer'
+from cust_sales cs
+join cust c
+on cs.invoice_no = c.invoice_no
+group by shopping_mall
+order by 'total customer' desc;
+
+-- 2.	What are the average sales of fashion and beauty products in each month for each shopping mall in each year?
+-- Compare to the actual fashion and beauty monthly sales and total sales of the month.
+
+with msales as (
+	select shopping_mall, year(invoice_date) yyear, month(invoice_date) mmonth, round(sum(price),2) sales
+    from cust_sales
+    where category in ('clothing','shoes','cosmetics')
+    group by shopping_mall, yyear, mmonth
+    order by shopping_mall, yyear, mmonth),
+   
+avg_msales as (
+	select shopping_mall, yyear, mmonth, avg(sales) over (partition by yyear, shopping_mall) monthly_avgsales
+    from msales
+    ),
+    
+totsales as (
+select shopping_mall, year(invoice_date) yyear, month(invoice_date) mmonth, round(sum(price)) monthly_totalsales
+from cust_sales
+group by shopping_mall, yyear, mmonth
+order by shopping_mall, yyear, mmonth)
+  
+select a.shopping_mall, a.yyear, a.mmonth, sales 'fashion and beauty sales', round((monthly_avgsales),2) 'monthly avgsales by year', monthly_totalsales
+from msales a
+join avg_msales b
+join totsales c
+on a.shopping_mall = b.shopping_mall
+and a.shopping_mall = c.shopping_mall
+and a.yyear = b.yyear
+and a.yyear = c.yyear
+and a.mmonth = b.mmonth
+and a.mmonth = c.mmonth; 
+
+-- 3.	What is the top 3 most popular category in each shopping mall?
+
+with popcat as 
+(select shopping_mall, category, sum(quantity) totalquantity, row_number() over(partition by shopping_mall order by sum(quantity) desc) num 
+from cust_sales
+group by shopping_mall, category
+order by shopping_mall, totalquantity desc)
+
+select * 
+from popcat
+where num >= 1 and num <= 3
+order by shopping_mall;
+
+-- 4.	Which age range has most purchased in fashion and beauty categories?
+
+
+with agesold as (
+select age, sum(quantity) totalsold
+from cust_sales css
+join cust ct
+on css.id = ct.id
+where category in ('clothing','shoes','cosmetics')
+group by age 
+order by age),
+
+agr as (
+select sum(totalsold) quantitysold,
+	case
+		when age >= 18 and age <= 28 then '18 - 28'
+		when age >= 29 and age <= 39 then '29 - 39'
+		when age >= 40 and age <= 50 then '40 - 50'
+		when age >= 51 and age <= 61 then '51 - 61'
+		else 'above 61'
+	end agegroup
+from agesold
+group by agegroup)
+
+select agegroup, quantitysold
+from agesold, agr
+group by agegroup
+;
+
+-- 5.	Which payment method most use during the past three years? Compare to all shopping malls.
+
+with payment as (
+select shopping_mall , payment_method, count(payment_method) total, row_number() over (partition by shopping_mall) num
+from cust_sales
+group by shopping_mall, payment_method
+order by shopping_mall, total desc )
+select * from payment 
+where num = 1;
+
+-- 6. Which gender contribute to sales most on fashion and beauty products in each years for each shopping mall?
+
+with mallsales as (
+select shopping_mall, year(invoice_date) yearly, gender, sum(price) totalsales
+from cust_sales css
+	join cust ct
+	on css.id = ct.id
+    where category in ('clothing','shoes','cosmetics')
+    group by shopping_mall, yearly, gender
+    order by shopping_mall, yearly, gender),
+    
+yrsales as (
+select shopping_mall mall, year(invoice_date) yr, sum(sum(price)) over (partition by shopping_mall, year(invoice_date)) ysales
+		from cust_sales
+		group by shopping_mall, year(invoice_date) 
+		order by shopping_mall, year(invoice_date) ),
+        
+gender_cont as (
+select shopping_mall, yearly, gender, round((totalsales),2) sales, round((ysales),2) yearlysales,
+	round(((totalsales/ysales)*100),2) percent,
+	row_number() over (partition by shopping_mall, yearly) num
+from mallsales
+join yrsales 
+on shopping_mall = mall
+and yearly = yr
+order by shopping_mall, yearly, percent desc
+)
+
+select *
+from gender_cont
+where num = 1
+;
